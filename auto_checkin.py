@@ -2,12 +2,13 @@ import os
 import sys
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from ext_bark import send_bark_notification
+from ext_notification import send_notification
 
 
 class Response(BaseModel):
@@ -68,13 +69,15 @@ class KurobbsClient:
         """Perform the check-in operation."""
         user_game_list = self.get_user_game_list(3)
 
-        date = datetime.now().month
+        # 获取北京时间（UTC+8）
+        beijing_tz = ZoneInfo('Asia/Shanghai')
+        beijing_time = datetime.now(beijing_tz)
         data = {
             "gameId": user_game_list[0].get("gameId", 2),
             "serverId": user_game_list[0].get("serverId", None),
             "roleId": user_game_list[0].get("roleId", 0),
             "userId": user_game_list[0].get("userId", 0),
-            "reqMonth": f"{date:02d}",
+            "reqMonth": f"{beijing_time.month:02d}",
         }
         return self.make_request(self.SIGN_URL, data)
 
@@ -83,11 +86,11 @@ class KurobbsClient:
         return self.make_request(self.USER_SIGN_URL, {"gameId": 2})
 
     def _process_sign_action(
-        self,
-        action_name: str,
-        action_method: Callable[[], Response],
-        success_message: str,
-        failure_message: str,
+            self,
+            action_name: str,
+            action_method: Callable[[], Response],
+            success_message: str,
+            failure_message: str,
     ):
         """
         Handle the common logic for sign-in actions.
@@ -98,10 +101,11 @@ class KurobbsClient:
         :param failure_message: The message to log on failure.
         """
         resp = action_method()
+        logger.debug(resp)
         if resp.success:
             self.result[action_name] = success_message
         else:
-            self.exceptions.append(KurobbsClientException(failure_message))
+            self.exceptions.append(KurobbsClientException(f'{failure_message}, {resp.msg}'))
 
     def start(self):
         """Start the sign-in process."""
@@ -130,7 +134,7 @@ class KurobbsClient:
         if msg := self.msg:
             logger.info(msg)
         if self.exceptions:
-            raise KurobbsClientException(", ".join(map(str, self.exceptions)))
+            raise KurobbsClientException("; ".join(map(str, self.exceptions)))
 
 
 def configure_logger(debug: bool = False):
@@ -150,10 +154,10 @@ def main():
         kurobbs = KurobbsClient(token)
         kurobbs.start()
         if kurobbs.msg:
-            send_bark_notification(kurobbs.msg)
+            send_notification(kurobbs.msg)
     except KurobbsClientException as e:
         logger.error(str(e), exc_info=False)
-        send_bark_notification("签到任务失败!")
+        send_notification(str(e))
         sys.exit(1)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
